@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>KTV 歌唱大賽評分系統</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+
+    <style>
+        body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; background-color: #1a1a2e; color: #fff; }
+        .star-btn:hover { transform: scale(1.2); }
+        .star-active { color: #fbbf24; } /* 金黃色 */
+        .star-inactive { color: #4b5563; } /* 灰色 */
+    </style>
+</head>
+<body>
+    <div id="app" class="max-w-3xl mx-auto p-4 pb-20">
+        
+        <header class="text-center mb-8 mt-4">
+            <h1 class="text-4xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-purple-400 to-pink-600">
+                🎤 KTV 歌唱大賽評分
+            </h1>
+            <p class="text-gray-400 mt-2">公平、公正、公開 (大概啦)</p>
+        </header>
+
+        <div v-if="loading" class="text-center py-10">資料讀取中...</div>
+
+        <div v-if="!hasVoted && !loading">
+            <p class="text-yellow-300 text-center mb-6 font-bold bg-gray-800 p-2 rounded">
+                ⚠️ 注意：每人限評分一次，請聽完再送出喔！
+            </p>
+
+            <div v-for="(singer, sIndex) in singers" :key="singer.name" class="mb-8 bg-gray-800 rounded-xl p-6 shadow-lg border border-gray-700">
+                <h2 class="text-2xl font-bold mb-4 text-pink-400 border-b border-gray-600 pb-2">
+                    👨‍🎤 選手：{{ singer.name }}
+                </h2>
+
+                <div v-for="songNum in 5" :key="songNum" class="mb-4">
+                    <div class="flex flex-col sm:flex-row sm:items-center justify-between">
+                        <span class="text-lg font-medium mb-2 sm:mb-0">🎵 第 {{ songNum }} 首歌</span>
+                        
+                        <div class="flex space-x-1">
+                            <button v-for="star in 6" :key="star" 
+                                @click="rate(sIndex, songNum, star)"
+                                class="star-btn transition-transform duration-200 text-2xl focus:outline-none"
+                                :class="getStarClass(sIndex, songNum, star)"
+                                :title="ratingLabels[star]">
+                                ★
+                            </button>
+                        </div>
+                    </div>
+                    <div class="text-right text-sm text-gray-400 mt-1 h-5">
+                        {{ getRatingLabel(sIndex, songNum) }}
+                    </div>
+                </div>
+            </div>
+
+            <button @click="submitScores" 
+                class="w-full bg-gradient-to-r from-green-400 to-blue-500 hover:from-green-500 hover:to-blue-600 text-white font-bold py-4 px-6 rounded-lg shadow-lg transform transition hover:scale-105 text-xl">
+                🚀 送出評分 (無法修改)
+            </button>
+        </div>
+
+        <div v-else-if="!loading" class="animate-fade-in">
+            <div class="bg-gray-800 rounded-xl p-8 shadow-2xl border border-yellow-500 text-center mb-8">
+                <h2 class="text-3xl font-bold text-yellow-400 mb-2">🏆 即時戰況排行榜 🏆</h2>
+                <p class="text-gray-400 mb-6">感謝您的評分！以下是目前累積分數</p>
+
+                <div class="space-y-4">
+                    <div v-for="(singer, index) in sortedSingers" :key="singer.name" 
+                        class="flex items-center justify-between bg-gray-700 p-4 rounded-lg relative overflow-hidden">
+                        <div class="absolute left-0 top-0 bottom-0 w-2" :class="getRankColor(index)"></div>
+                        
+                        <div class="flex items-center ml-4">
+                            <span class="text-2xl font-bold w-8 text-center mr-4">{{ index + 1 }}</span>
+                            <span class="text-xl font-bold">{{ singer.name }}</span>
+                        </div>
+                        <div class="text-right">
+                            <span class="text-3xl font-bold text-yellow-300">{{ singer.totalScore }}</span>
+                            <span class="text-xs text-gray-400 block">累積星星</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="text-center text-gray-500 text-sm mt-10">
+                <p>重新整理頁面可查看最新分數</p>
+                <p class="mt-2 text-xs">Based on Github & Firebase</p>
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+
+        const firebaseConfig = {
+            apiKey: "YOUR_API_KEY",
+            authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
+            databaseURL: "https://YOUR_PROJECT_ID-default-rtdb.firebaseio.com",
+            projectId: "YOUR_PROJECT_ID",
+            storageBucket: "YOUR_PROJECT_ID.appspot.com",
+            messagingSenderId: "YOUR_ID",
+            appId: "YOUR_APP_ID"
+        };
+
+	    apiKey: "AIzaSyCRQrQyDSVmjC2xuUOrbZ2KexQbOTkHge4",
+            authDomain: "ktv-score.firebaseapp.com",
+            databaseURL: "https://ktv-score-default-rtdb.firebaseio.com",
+            projectId: "ktv-score",
+            storageBucket: "ktv-score.firebasestorage.app",
+            messagingSenderId: "433112818952",
+            appId: "1:433112818952:web:dc116c5bf9ec730fa278bd",
+            measurementId: "G-TXJ4DCL3C7"
+        };
+
+        // 初始化 Firebase
+        firebase.initializeApp(firebaseConfig);
+        const db = firebase.database();
+
+        const { createApp, ref, computed, onMounted } = Vue;
+
+        createApp({
+            setup() {
+                const loading = ref(true);
+                const hasVoted = ref(false);
+                
+                // 定義歌手與預設資料
+                const singers = ref([
+                    { name: '舫如', scores: {}, totalScore: 0 },
+                    { name: '曉翔', scores: {}, totalScore: 0 },
+                    { name: '查查', scores: {}, totalScore: 0 },
+                    { name: '阿哲', scores: {}, totalScore: 0 },
+                    { name: '知誼', scores: {}, totalScore: 0 }
+                ]);
+
+                // 評分標準文案
+                const ratingLabels = {
+                    6: "6 顆星 超完美 🏆",
+                    5: "5 顆星 很厲害 🌟",
+                    4: "4 顆星 還不錯啦 👏",
+                    3: "3 顆星 普普通通 🤏",
+                    2: "2 顆星 你是否來不及練這首？😏",
+                    1: "1 顆星 這首我唱的，1 顆星讓你們 😎"
+                };
+
+                // 使用者暫存的評分 (User Local State)
+                const userVotes = ref({}); 
+                // 結構: { '舫如': { 1: 5, 2: 4... }, '曉翔': ... }
+
+                // 初始化使用者投票暫存結構
+                singers.value.forEach(s => {
+                    userVotes.value[s.name] = {};
+                });
+
+                // 檢查是否投過票 & 讀取遠端分數
+                onMounted(() => {
+                    // 1. 檢查 LocalStorage
+                    if (localStorage.getItem('ktv_voted') === 'true') {
+                        hasVoted.value = true;
+                    }
+
+                    // 2. 監聽 Firebase 資料庫變化 (Realtime)
+                    const scoresRef = db.ref('scores');
+                    scoresRef.on('value', (snapshot) => {
+                        const data = snapshot.val();
+                        if (data) {
+                            // 更新前端顯示的總分
+                            singers.value.forEach(singer => {
+                                singer.totalScore = data[singer.name] || 0;
+                            });
+                        }
+                        loading.value = false;
+                    });
+                });
+
+                // 點擊星星
+                const rate = (sIndex, songNum, star) => {
+                    const singerName = singers.value[sIndex].name;
+                    userVotes.value[singerName][songNum] = star;
+                };
+
+                // 取得星星樣式
+                const getStarClass = (sIndex, songNum, star) => {
+                    const singerName = singers.value[sIndex].name;
+                    const currentVote = userVotes.value[singerName][songNum] || 0;
+                    return star <= currentVote ? 'star-active' : 'star-inactive';
+                };
+
+                // 取得評語顯示
+                const getRatingLabel = (sIndex, songNum) => {
+                    const singerName = singers.value[sIndex].name;
+                    const currentVote = userVotes.value[singerName][songNum];
+                    return currentVote ? ratingLabels[currentVote] : '';
+                };
+
+                // 送出評分
+                const submitScores = () => {
+                    // 檢查是否每首都評了 (5人 * 5首 = 25分)
+                    let totalVotesCount = 0;
+                    singers.value.forEach(s => {
+                        totalVotesCount += Object.keys(userVotes.value[s.name]).length;
+                    });
+
+                    if (totalVotesCount < 25) {
+                        alert(`目前只評了 ${totalVotesCount}/25 次！請完成所有評分再送出。`);
+                        return;
+                    }
+
+                    if (!confirm("確定要送出分數嗎？送出後無法修改！")) return;
+
+                    // 使用 Transaction 原子操作更新分數 (避免多人同時寫入衝突)
+                    const updates = {};
+                    singers.value.forEach(singer => {
+                        const userTotalForSinger = Object.values(userVotes.value[singer.name]).reduce((a, b) => a + b, 0);
+                        // 這是 Firebase 特有的累加寫法
+                        db.ref('scores/' + singer.name).transaction((currentScore) => {
+                            return (currentScore || 0) + userTotalForSinger;
+                        });
+                    });
+
+                    // 標記已投票
+                    localStorage.setItem('ktv_voted', 'true');
+                    hasVoted.value = true;
+                    alert("評分成功！查看排行榜吧！");
+                };
+
+                // 排行榜排序
+                const sortedSingers = computed(() => {
+                    return [...singers.value].sort((a, b) => b.totalScore - a.totalScore);
+                });
+
+                const getRankColor = (index) => {
+                    if (index === 0) return 'bg-yellow-400';
+                    if (index === 1) return 'bg-gray-300';
+                    if (index === 2) return 'bg-orange-400';
+                    return 'bg-transparent';
+                };
+
+                return {
+                    singers,
+                    userVotes,
+                    loading,
+                    hasVoted,
+                    ratingLabels,
+                    rate,
+                    getStarClass,
+                    getRatingLabel,
+                    submitScores,
+                    sortedSingers,
+                    getRankColor
+                };
+            }
+        }).mount('#app');
+    </script>
+</body>
+</html>
